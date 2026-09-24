@@ -230,10 +230,19 @@
         <g id="stemGroup">
           <path id="stemPath" d="M110 222 C 110 180, 110 140, 110 96" stroke="#5F8A45" stroke-width="7" fill="none" stroke-linecap="round"/>
 
-          <!-- leaf left -->
-          <path id="leafLeft" d="M108 170 C 78 168, 62 150, 66 130 C 92 132, 108 148, 108 170 Z" fill="#5F8A45"/>
-          <!-- leaf right -->
-          <path id="leafRight" d="M112 190 C 142 186, 160 166, 156 146 C 128 150, 112 168, 112 190 Z" fill="#4F7A3B"/>
+          <!-- leaves: positioned by JS to stay attached to the stem's actual curve -->
+          <g id="leafLeft">
+            <path d="M0,0 C -22,-3 -37,-15 -36,-32 C -14,-30 0,-16 0,0 Z" fill="#5F8A45"/>
+            <path d="M-2,-2 C -14,-8 -24,-16 -29,-27" stroke="#3F5F2E" stroke-width="1.4" fill="none" opacity="0.55" stroke-linecap="round"/>
+            <circle id="rotLeft1" cx="-12" cy="-9" r="4" fill="#3A2A1C" opacity="0"/>
+            <circle id="rotLeft2" cx="-24" cy="-20" r="3" fill="#3A2A1C" opacity="0"/>
+          </g>
+          <g id="leafRight">
+            <path d="M0,0 C 22,-3 37,-15 36,-32 C 14,-30 0,-16 0,0 Z" fill="#4F7A3B"/>
+            <path d="M2,-2 C 14,-8 24,-16 29,-27" stroke="#334F26" stroke-width="1.4" fill="none" opacity="0.55" stroke-linecap="round"/>
+            <circle id="rotRight1" cx="12" cy="-9" r="4" fill="#3A2A1C" opacity="0"/>
+            <circle id="rotRight2" cx="24" cy="-20" r="3" fill="#3A2A1C" opacity="0"/>
+          </g>
 
           <!-- flower head -->
           <g id="flowerHead" transform="translate(110,96)">
@@ -267,6 +276,10 @@
   const stemPath = document.getElementById('stemPath');
   const leafLeft = document.getElementById('leafLeft');
   const leafRight = document.getElementById('leafRight');
+  const rotLeft1 = document.getElementById('rotLeft1');
+  const rotLeft2 = document.getElementById('rotLeft2');
+  const rotRight1 = document.getElementById('rotRight1');
+  const rotRight2 = document.getElementById('rotRight2');
   const flowerHead = document.getElementById('flowerHead');
   const petalsG = document.getElementById('petals');
   const pistil = document.getElementById('pistil');
@@ -279,6 +292,20 @@
   function lerpColor(c1,c2,t){
     const a=hexToRgb(c1), b=hexToRgb(c2);
     return rgbToHex(lerp(a[0],b[0],t), lerp(a[1],b[1],t), lerp(a[2],b[2],t));
+  }
+
+  // point + tangent angle at parameter s (0..1) along a cubic bezier
+  function bezierPoint(p0,p1,p2,p3,s){
+    const mt=1-s;
+    const x = mt*mt*mt*p0.x + 3*mt*mt*s*p1.x + 3*mt*s*s*p2.x + s*s*s*p3.x;
+    const y = mt*mt*mt*p0.y + 3*mt*mt*s*p1.y + 3*mt*s*s*p2.y + s*s*s*p3.y;
+    return {x,y};
+  }
+  function bezierTangentAngle(p0,p1,p2,p3,s){
+    const mt=1-s;
+    const dx = 3*mt*mt*(p1.x-p0.x) + 6*mt*s*(p2.x-p1.x) + 3*s*s*(p3.x-p2.x);
+    const dy = 3*mt*mt*(p1.y-p0.y) + 6*mt*s*(p2.y-p1.y) + 3*s*s*(p3.y-p2.y);
+    return Math.atan2(dy,dx) * 180/Math.PI;
   }
 
   // build 6 petals once
@@ -392,14 +419,30 @@
     const stemColor = cold>hot ? lerpColor('#5F8A45', '#7E93A0', cold) : lerpColor('#5F8A45', '#A9713B', hot);
     stemPath.setAttribute('stroke', stemColor);
 
-    // leaves droop with stem, fade a little when unhealthy
-    const leafDroop = (cold - hot) * 26;
-    leafLeft.setAttribute('transform', `rotate(${8+leafDroop*0.9} 92 150)`);
-    leafRight.setAttribute('transform', `rotate(${-6+leafDroop*0.6} 130 168)`);
-    leafLeft.setAttribute('fill', lerpColor('#5F8A45', cold>hot? '#8AA283':'#B08A4F', Math.max(cold,hot)));
-    leafRight.setAttribute('fill', lerpColor('#4F7A3B', cold>hot? '#7C9578':'#9C793F', Math.max(cold,hot)));
-    leafLeft.style.opacity = 0.55 + h*0.45;
-    leafRight.style.opacity = 0.55 + h*0.45;
+    // leaves: attached to the actual stem curve, so they decay together with it
+    const p0={x:110,y:222}, p1={x:c1x,y:c1y}, p2={x:c2x,y:c2y}, p3={x:endX,y:endY};
+    const decay = 1 - h; // 0 = thriving, 1 = fully rotten
+    const stress = Math.max(cold, hot); // how far from the comfortable zone
+
+    // rot colour: green -> frost-grey-black (cold) or -> crisp black-brown (hot)
+    const rotTarget = cold>hot ? '#333B33' : '#2E2016';
+    const leafColorL = lerpColor('#5F8A45', rotTarget, decay);
+    const leafColorR = lerpColor('#4F7A3B', rotTarget, decay);
+
+    [ {g:leafLeft, s:0.52, flare:-58, rot1:rotLeft1, rot2:rotLeft2, base:'#5F8A45', color:leafColorL},
+      {g:leafRight, s:0.74, flare:56, rot1:rotRight1, rot2:rotRight2, base:'#4F7A3B', color:leafColorR}
+    ].forEach(leaf=>{
+      const pt = bezierPoint(p0,p1,p2,p3,leaf.s);
+      const tangent = bezierTangentAngle(p0,p1,p2,p3,leaf.s);
+      const droopIn = (cold - hot) * 30; // extra sag toward the ground when unhealthy
+      const angle = tangent + 90 + Math.sign(leaf.flare)*(0) + (leaf.flare * (0.6+0.4*h)) + droopIn;
+      const scale = lerp(0.5, 1, h) * (1 - decay*0.15);
+      leaf.g.setAttribute('transform', `translate(${pt.x},${pt.y}) rotate(${angle}) scale(${scale})`);
+      leaf.g.querySelector('path').setAttribute('fill', leaf.color);
+      leaf.g.style.opacity = 0.5 + h*0.5;
+      leaf.rot1.setAttribute('opacity', clamp((decay-0.35)/0.5,0,1)*0.7);
+      leaf.rot2.setAttribute('opacity', clamp((decay-0.5)/0.5,0,1)*0.6);
+    });
 
     // flower head position follows stem end
     flowerHead.setAttribute('transform', `translate(${endX},${endY})`);
